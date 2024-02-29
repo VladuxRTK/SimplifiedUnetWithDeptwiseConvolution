@@ -94,8 +94,8 @@ train_transform = transform
 val_transform = transform
 
 # Define datasets and data loaders
-train_dataset = Cityscapes(root_dir=r'C:\Disertatie', split='train', transform=train_transform)
-val_dataset = Cityscapes(root_dir=r'C:\Disertatie', split='val', transform=val_transform)
+train_dataset = Cityscapes(root_dir=r'/content/drive/MyDrive/disertatie/', split='train', transform=train_transform)
+val_dataset = Cityscapes(root_dir=r'/content/drive/MyDrive/disertatie/', split='val', transform=val_transform)
 
 train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size=4, shuffle=False)
@@ -119,7 +119,7 @@ def compute_iou_sklearn(preds, labels, num_classes):
 
 
 
-def train_and_test_model(model, train_loader, val_loader, criterion, optimizer, num_epochs=25, checkpoint_path='model_checkpoint.pth', checkpoint_interval=5, resume_from=None):
+def train_and_test_model(model, train_loader, val_loader, criterion, optimizer, num_epochs=25, checkpoint_path='model_checkpoint.pth', checkpoint_interval=1, resume_from=None):
     # Initialize the starting epoch, best IoU score, and copy of the best model weights
     start_epoch = 0
     best_iou = 0.0
@@ -136,7 +136,7 @@ def train_and_test_model(model, train_loader, val_loader, criterion, optimizer, 
         print(f"Resuming training from epoch {start_epoch}")
 
     # Send the model to the device (CPU or GPU)
-    device = torch.device("cpu")
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("The model is using the " + str(device) + " device")
     model.to(device)
     best_model_wts = copy.deepcopy(model.state_dict())
@@ -156,12 +156,16 @@ def train_and_test_model(model, train_loader, val_loader, criterion, optimizer, 
             running_iou = 0.0
             running_corrects = 0  # Track the number of correct predictions
             total_samples = 0  # Total number of samples processed
+            total_pixels = 0
+            correct_pixels = 0
 
             # Initialize tqdm progress bar
             epoch_progress = tqdm(total=len(train_loader if phase == 'train' else val_loader), desc=f'Epoch {epoch + 1}/{num_epochs} {phase}', unit='batch')
 
             # Iterate over data
             for inputs, labels in (train_loader if phase == 'train' else val_loader):
+                labels = labels.squeeze(1)
+                labels = labels.long()
                 inputs = inputs.to(device)
                 labels = labels.to(device)
 
@@ -181,23 +185,26 @@ def train_and_test_model(model, train_loader, val_loader, criterion, optimizer, 
 
                 # Compute the loss and accuracy
                 running_loss += loss.item() * inputs.size(0)
-                running_corrects += torch.sum(preds == labels.data)  # Compute accuracy
+                correct_pixels += (preds == labels).sum().item()
+                total_pixels += torch.numel(preds)
+
                 total_samples += inputs.size(0)
 
                 # Compute IoU here (implement your own function or call to a library)
-                iou = compute_iou_sklearn(outputs.detach(), labels, num_classes=19)
+                iou = jaccard_score(labels.view(-1).cpu().numpy(), preds.view(-1).cpu().numpy(), average='macro', labels=np.arange(19), zero_division=1)
+
                 running_iou += iou
 
                 # Dynamically update the progress bar description with the latest loss and accuracy
-                epoch_progress.set_description(f'Epoch {epoch + 1}/{num_epochs} {phase} - Loss: {running_loss/total_samples:.4f}, Acc: {running_corrects.double()/total_samples:.4f}, IoU: {running_iou/total_samples:.4f}')
+                epoch_progress.set_description(f'Epoch {epoch + 1}/{num_epochs} {phase} - Loss: {running_loss/total_samples:.4f}, Acc: {correct_pixels/total_pixels:.4f}, IoU: {running_iou/total_samples:.4f}')
                 epoch_progress.update(1)
 
             epoch_progress.close()
 
             # Calculate epoch loss and accuracy
             epoch_loss = running_loss / total_samples
-            epoch_acc = running_corrects.double() / total_samples
-            epoch_iou = running_iou / total_samples  # Calculate epoch IoU
+            epoch_acc = correct_pixels / total_pixels
+            epoch_iou = running_iou / total_samples # Calculate epoch IoU
 
             # Print metrics at the end of the epoch
             print(f'{phase} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f} IoU: {epoch_iou:.4f}')
@@ -226,5 +233,5 @@ model = SimplifiedUNet(19)
 criterion = nn.CrossEntropyLoss()  # For multi-class segmentation
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
-best_model= train_and_test_model(model,train_loader=train_loader,val_loader=val_loader,criterion=criterion,optimizer=optimizer)
+best_model= train_and_test_model(model,train_loader=train_loader,val_loader=val_loader,criterion=criterion,optimizer=optimizer,checkpoint_path='/content/drive/MyDrive/disertatie/checkpoints')
 
